@@ -1913,7 +1913,7 @@ void init_default_system_param() {
 void close_system () {
 	write_i2c_relay_cnt(0,0, DISABLE_MESSAGE); //  disable all relays
 
-	write_i2c_cnt (DISABLE, PAMP_IN_SEL_TEST_msk|PAMP_IN_SEL_RX_msk|PSU_15V_TX_P_EN_msk|PSU_15V_TX_N_EN_msk|AMP_HP_LT1210_EN_msk|PSU_5V_ANA_P_EN_msk|PSU_5V_ANA_N_EN_msk, DISABLE_MESSAGE);
+	write_i2c_cnt (DISABLE, PAMP_IN_SEL_TEST_msk|PAMP_IN_SEL_RX_msk|PSU_15V_TX_P_EN_msk|PSU_15V_TX_N_EN_msk|AMP_HP_LT1210_EN_msk|PSU_5V_ANA_P_EN_msk|PSU_5V_ANA_N_EN_msk | PSU_5V_TX_N_EN_msk, DISABLE_MESSAGE);
 
 	write_i2c_rx_gain (0x0F); //  disable the receiver gain
 
@@ -2117,7 +2117,7 @@ int main(int argc, char * argv[]) {
 }
 */
 
-// noise Iterate (rename the output to "noise")
+/* noise Iterate (rename the output to "noise")
 int main(int argc, char * argv[]) {
 
     // input parameters
@@ -2140,6 +2140,70 @@ int main(int argc, char * argv[]) {
 	);
 
 	// close_system();
+    munmap_peripherals();
+    close_physical_memory_device();
+    return 0;
+}
+*/
+
+// standalone main
+int main() {
+
+    open_physical_memory_device();
+    mmap_peripherals();
+    init_default_system_param();
+
+    alt_write_word( h2p_rx_delay_addr , 20 );
+
+    write_i2c_rx_gain (0x0F); //  disable the receiver gain
+
+    // DAC write
+    init_dac_ad5722r();			// power up the dac and init its operation
+	write_vbias(2.2);			// default number for vbias is -3.35V (reflection at -20dB at 4.3MHz)
+	write_vvarac(1.8);		// the default number for v_varactor is -1.2V (gain of 23dB at 4.3 MHz)
+
+	// i2c write
+	write_i2c_relay_cnt(100,100, DISABLE_MESSAGE); //  disable all relays
+
+	write_i2c_cnt (ENABLE, PAMP_IN_SEL_TEST_msk|PAMP_IN_SEL_RX_msk|PSU_15V_TX_P_EN_msk|PSU_15V_TX_N_EN_msk|AMP_HP_LT1210_EN_msk|PSU_5V_ANA_P_EN_msk|PSU_5V_ANA_N_EN_msk | PSU_5V_TX_N_EN_msk, DISABLE_MESSAGE);
+
+	// input parameters
+	double cpmg_freq = 4.0;
+	double pulse1_us = 10;
+	double pulse2_us = pulse1_us*1.6;
+	double pulse1_dtcl = 0.5;
+	double pulse2_dtcl = 0.5;
+	double echo_spacing_us = 300;
+	long unsigned scan_spacing_us = 200000;
+	unsigned int samples_per_echo = 1024;
+	unsigned int echoes_per_scan = 128;
+	double init_adc_delay_compensation = 6;
+	unsigned int number_of_iteration = 1;
+	uint32_t ph_cycl_en = 1;
+	unsigned int pulse180_t1_int = 0;
+	unsigned int delay180_t1_int = 0;
+
+	// write t1-IR measurement parameters (put both to 0 if IR is not desired)
+	alt_write_word( h2p_t1_pulse , pulse180_t1_int );
+	alt_write_word( h2p_t1_delay , delay180_t1_int );
+
+	// printf("cpmg_freq = %0.3f\n",cpmg_freq);
+	CPMG_iterate (
+		cpmg_freq,
+		pulse1_us,
+		pulse2_us,
+		pulse1_dtcl,
+		pulse2_dtcl,
+		echo_spacing_us,
+		scan_spacing_us,
+		samples_per_echo,
+		echoes_per_scan,
+		init_adc_delay_compensation,
+		number_of_iteration,
+		ph_cycl_en
+	);
+
+	close_system();
     munmap_peripherals();
     close_physical_memory_device();
     return 0;
