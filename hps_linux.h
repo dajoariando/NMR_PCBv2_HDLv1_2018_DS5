@@ -127,7 +127,6 @@ void print_warning_ad5722r();
 void init_default_system_param();								// initialize the system with tuned default parameter
 void write_i2c_relay_cnt (uint8_t c_shunt, uint8_t c_series, uint8_t en_mesg);	// program the capacitance with the relay
 void write_i2c_cnt (uint32_t en, uint32_t addr_msk, uint8_t en_mesg);
-void write_i2c_rx_gain (uint8_t rx_gain);						// program the final receiver gain. 0x00 means minimum gain (not really zero gain) and 0x0F means max gain (infinite/open circuit). So effective value is 0x00 to 0x0E
 void sweep_matching_network();									// sweep the capacitance in matching network by sweeping the relay (FOREVER LOOP)
 void write_vbias (double vbias);								// write vbias as voltage format
 void write_vvarac (double vvarac);								// write vvarac as voltage format
@@ -162,10 +161,10 @@ void tx_sampling(double tx_freq, double sampfreq, unsigned int samples_per_echo,
 FILE	*fptr;
 long i;
 long j;
-unsigned int rddata [128000];
-// unsigned int *rddata;
-unsigned int rddata_16[32000000];
-// unsigned int *rddata_16;
+// unsigned int rddata [128000];
+unsigned int *rddata;
+// unsigned int rddata_16[32000000];
+unsigned int *rddata_16;
 char foldername[50]; // variable to store folder name of the measurement data
 char pathname[60];
 

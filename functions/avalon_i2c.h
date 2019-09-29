@@ -1,4 +1,4 @@
-#define I2C_FIFO_DEPTH			256
+#define I2C_FIFO_DEPTH			32
 #define I2C_DATA_MSK			0xFF
 
 #define WR_I2C					0x00
