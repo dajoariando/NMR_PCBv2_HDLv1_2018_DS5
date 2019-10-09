@@ -23,6 +23,7 @@
 #include "functions/avalon_spi.h"
 #include "functions/dac_ad5722r_driver.h"
 #include "functions/hallsens_als31313_driver.h"
+#include "functions/pwm_pca9685_driver.h"
 #include "functions/general.h"
 #include "functions/reconfig_functions.h"
 #include "functions/pll_param_generator.h"
@@ -493,6 +494,96 @@ void rd_hall_sens_data (void) {
 	printf("Z = %5.2f Gauss\n", ZGauss);
 	printf("Temp = %5.2f %%C\n", Temp);
 	printf("\n");
+
+}
+
+//PWM CONTROL (7/17/2019)
+void write_i2c_pwm (uint8_t pwm_address, uint8_t pwm_data){
+    uint8_t en_mesg = 1;
+
+    uint8_t i2c_addr_cnt = 0x80; // i2c address for PCA9685 used by PWM
+    i2c_addr_cnt >>= 1; // shift by one because the LSB address is not used as an address (controlled by the Altera I2C IP)
+
+    alt_write_word( (h2p_i2c_ext_addr+ISR_OFST) , RX_OVER_MSK|ARBLOST_DET_MSK|NACK_DET_MSK ); // RESET THE I2C FROM PREVIOUS ERRORS
+    check_i2c_isr_stat (h2p_i2c_ext_addr, en_mesg);
+    i2c_rxdata_flush(h2p_i2c_ext_addr, en_mesg);
+
+    alt_write_word( (h2p_i2c_ext_addr+CTRL_OFST), 1<<CORE_EN_SHFT); // enable i2c core
+
+    alt_write_word( (h2p_i2c_ext_addr+SCL_LOW_OFST), 250); // set the SCL_LOW_OFST to 250 for 100 kHz with 50 MHz clock
+    alt_write_word( (h2p_i2c_ext_addr+SCL_HIGH_OFST), 250); // set the SCL_HIGH_OFST to 250 for 100 kHz with 50 MHz clock
+    alt_write_word( (h2p_i2c_ext_addr+SDA_HOLD_OFST), 1); // set the SDA_HOLD_OFST to 1 as the default (datasheet requires min 0 ns hold time)
+
+    alt_write_word( (h2p_i2c_ext_addr+TFR_CMD_OFST) , (1<<STA_SHFT) | (0<<STO_SHFT) | (i2c_addr_cnt<<AD_SHFT) | (WR_I2C<<RW_D_SHFT) ); // send chip address
+    alt_write_word( (h2p_i2c_ext_addr+TFR_CMD_OFST) , (0<<STA_SHFT) | (0<<STO_SHFT) | (pwm_address & I2C_DATA_MSK) ); // send register address
+    alt_write_word( (h2p_i2c_ext_addr+TFR_CMD_OFST) , (0<<STA_SHFT) | (1<<STO_SHFT) | ((pwm_data) & I2C_DATA_MSK) ); // send data
+}
+
+void write_i2c_pwm_rst (){
+    uint8_t en_mesg = 1;
+
+    uint8_t i2c_addr_cnt = 0x80; // i2c general call address for PCA9685 used by PWM
+    i2c_addr_cnt >>= 1; // shift by one because the LSB address is not used as an address (controlled by the Altera I2C IP)
+
+    alt_write_word( (h2p_i2c_ext_addr+ISR_OFST) , RX_OVER_MSK|ARBLOST_DET_MSK|NACK_DET_MSK ); // RESET THE I2C FROM PREVIOUS ERRORS
+    check_i2c_isr_stat (h2p_i2c_ext_addr, en_mesg);
+    i2c_rxdata_flush(h2p_i2c_ext_addr, en_mesg);
+
+    alt_write_word( (h2p_i2c_ext_addr+CTRL_OFST), 1<<CORE_EN_SHFT); // enable i2c core
+
+    alt_write_word( (h2p_i2c_ext_addr+SCL_LOW_OFST), 250); // set the SCL_LOW_OFST to 250 for 100 kHz with 50 MHz clock
+    alt_write_word( (h2p_i2c_ext_addr+SCL_HIGH_OFST), 250); // set the SCL_HIGH_OFST to 250 for 100 kHz with 50 MHz clock
+    alt_write_word( (h2p_i2c_ext_addr+SDA_HOLD_OFST), 1); // set the SDA_HOLD_OFST to 1 as the default (datasheet requires min 0 ns hold time)
+
+    alt_write_word( (h2p_i2c_ext_addr+TFR_CMD_OFST) , (1<<STA_SHFT) | (0<<STO_SHFT) | (i2c_addr_cnt<<AD_SHFT) | (WR_I2C<<RW_D_SHFT) ); // send general address
+    alt_write_word( (h2p_i2c_ext_addr+TFR_CMD_OFST) , (0<<STA_SHFT) | (1<<STO_SHFT) | (0x06 & I2C_DATA_MSK) ); // send SWRST Command
+    usleep(10000);
+
+    check_i2c_isr_stat (h2p_i2c_ext_addr, en_mesg);
+
+}
+//end PWM CONTROL
+
+void set_pwm_pulse(uint32_t channel,double pulse_length, uint32_t num){
+    // pulse length in us
+
+    //double freq = 125 *0.9; // in Hz, 0.9 correct for overshoot in the frequency setting
+    double freq = 244.1406; // in Hz, 4.096ms, corresponding resolution is 1us
+    double prescaleval = 25000000; // Internal oscillator frequency
+    prescaleval = round(prescaleval/(4096*freq)-1);
+    uint8_t prescale = floor(prescaleval + 0.5);
+    printf("prescale value= %d\n",prescale);
+
+    double t_max = 1/freq/2; // only use half of the duty cycle (2.048ms).
+    printf("tmax value= %f\n (s)",t_max);
+
+    double unit_pulse_length = 1/freq/4096*1000000; // close to 1 us
+    double val = pulse_length * unit_pulse_length;
+    uint32_t val_MSB, val_LSB;
+    val_LSB = (uint32_t)val & 0xFF;
+    val_MSB = ((uint32_t)val>>8) & 0xF;
+
+    printf("pulse length= %f\n",val);
+
+    write_i2c_pwm_rst ();    //SWRST
+    write_i2c_pwm(MODE1, 0x90);  //RESTART set Sleep bit 1 to program prescaler
+    usleep(10000);              //delay to stablize oscillator
+    write_i2c_pwm (PRE_SCALE, prescale);     //set PRE_SCALE to 0x06 = 1kHz, 0x0C = 486 Hz, 0x18 = 250 Hz, 0x30 - 125 Hz
+    write_i2c_pwm(MODE1, 0x00);  //clear sleep bit 1 to program prescaler
+
+    printf("Mag up\n");
+
+    int16_t LED_Sel_ON_L = LED0_ON_L + 4 * channel;
+    int16_t LED_Sel_ON_H = LED0_ON_H + 4 * channel;
+    int16_t LED_Sel_OFF_L = LED0_OFF_L + 4 * channel;
+    int16_t LED_Sel_OFF_H = LED0_OFF_H + 4 * channel;
+
+    write_i2c_pwm (LED_Sel_ON_L, 0x00);  //LED0_ON_L LSB
+    write_i2c_pwm (LED_Sel_ON_H, 0x00);  //LED0_ON_H MSB
+    write_i2c_pwm (LED_Sel_OFF_L, val_LSB);  //LED0_OFF_L LSB
+    write_i2c_pwm (LED_Sel_OFF_H, val_MSB);  //LED0_OFF_H MSB
+    usleep((0.75*t_max*2+t_max*2*(num-1))*1000000);  // in us, use 0.75 of tmax for disabling LED
+    write_i2c_pwm (LED_Sel_OFF_H, 0x10);  //LED0_OFF_H Turn OFF
 
 }
 
@@ -2287,7 +2378,7 @@ int main(int argc, char * argv[]) {
 }
 */
 
-// hallsensor test
+/* hallsensor read // rename to hallsens
 int main() {
 
     open_physical_memory_device();
@@ -2306,43 +2397,6 @@ int main() {
 
 	write_i2c_cnt (ENABLE, PAMP_IN_SEL_TEST_msk|PAMP_IN_SEL_RX_msk|PSU_15V_TX_P_EN_msk|PSU_15V_TX_N_EN_msk|AMP_HP_LT1210_EN_msk|PSU_5V_ANA_P_EN_msk|PSU_5V_ANA_N_EN_msk | PSU_5V_TX_N_EN_msk, DISABLE_MESSAGE);
 
-	/* input parameters
-	double cpmg_freq = 4.0;
-	double pulse1_us = 10;
-	double pulse2_us = pulse1_us*1.6;
-	double pulse1_dtcl = 0.5;
-	double pulse2_dtcl = 0.5;
-	double echo_spacing_us = 300;
-	long unsigned scan_spacing_us = 200000;
-	unsigned int samples_per_echo = 1024;
-	unsigned int echoes_per_scan = 128;
-	double init_adc_delay_compensation = 6;
-	unsigned int number_of_iteration = 1;
-	uint32_t ph_cycl_en = 1;
-	unsigned int pulse180_t1_int = 0;
-	unsigned int delay180_t1_int = 0;
-
-	// write t1-IR measurement parameters (put both to 0 if IR is not desired)
-	alt_write_word( h2p_t1_pulse , pulse180_t1_int );
-	alt_write_word( h2p_t1_delay , delay180_t1_int );
-
-	printf("cpmg_freq = %0.3f\n",cpmg_freq);
-	CPMG_iterate (
-		cpmg_freq,
-		pulse1_us,
-		pulse2_us,
-		pulse1_dtcl,
-		pulse2_dtcl,
-		echo_spacing_us,
-		scan_spacing_us,
-		samples_per_echo,
-		echoes_per_scan,
-		init_adc_delay_compensation,
-		number_of_iteration,
-		ph_cycl_en
-	);
-	*/
-
 	write_i2c_cnt (DISABLE, PSU_15V_TX_P_EN_msk|PSU_15V_TX_N_EN_msk, DISABLE_MESSAGE);
 
 	rd_hall_sens_stat(); // read hall sensor status
@@ -2355,6 +2409,32 @@ int main() {
 	}
 
 	close_system();
+    munmap_peripherals();
+    close_physical_memory_device();
+    return 0;
+}
+*/
+
+// pwm write pulse // rename to pwm
+int main(int argc, char * argv[]) {
+
+    // input parameters
+    uint32_t channel = atoi(argv[1]);
+    double pulse_length = atof(argv[2]);
+    uint32_t num_pulse = atoi(argv[3]);
+
+    open_physical_memory_device();
+    mmap_peripherals();
+    init_default_system_param();
+
+    //  write_i2c_cnt (ENABLE, PAMP_IN_SEL_TEST_msk|PAMP_IN_SEL_RX_msk|PSU_15V_TX_P_EN_msk|PSU_15V_TX_N_EN_msk|AMP_HP_LT1210_EN_msk|PSU_5V_ANA_P_EN_msk|PSU_5V_ANA_N_EN_msk | PSU_5V_TX_N_EN_msk, DISABLE_MESSAGE);
+
+    //  write_i2c_cnt (DISABLE, PSU_15V_TX_P_EN_msk|PSU_15V_TX_N_EN_msk, DISABLE_MESSAGE);
+
+    set_pwm_pulse(channel, pulse_length,num_pulse); //write to PWM, set_pwm_pulse(channel, pulse length, # of pulses)
+                            //pulse length in us (1us - 2048us)
+
+    close_system();
     munmap_peripherals();
     close_physical_memory_device();
     return 0;
